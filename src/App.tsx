@@ -10,7 +10,14 @@ import { autoLocationService, type LocationData } from './utils/autoLocation';
 import { PathValidator } from './utils/pathValidator';
 import type { PathSegment } from './utils/multiFloorPathfinding';
 import MiniMap from './components/MiniMap';
-import { findNearestRoom, type MapPosition } from './utils/minimap';
+import {
+  findNearestRoom,
+  findNearestWaypoint,
+  lerp,
+  smoothPosition,
+  snapToPolyline,
+  type MapPosition,
+} from './utils/minimap';
 import { CONFIG } from './config';
 
 const ARScene = lazy(() => import('./components/ARScene'));
@@ -144,7 +151,11 @@ function AppContent() {
   const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
   const [miniMapFloorId, setMiniMapFloorId] = useState(activeFloorId);
   const [pickedMapPos, setPickedMapPos] = useState<{ floorId: string; pos: MapPosition } | null>(null);
-  const [userMapPos, setUserMapPos] = useState<{ floorId: string; pos: MapPosition } | null>(null);
+  const [pickedRoomId, setPickedRoomId] = useState<string | null>(null);
+  const [userMapPose, setUserMapPose] = useState<{ floorId: string; pos: MapPosition; headingRad: number; accuracyMeters: number | null } | null>(null);
+  const userPoseRef = useRef<{ smoothed: MapPosition | null }>({
+    smoothed: null,
+  });
 
   useEffect(() => {
     if (isMiniMapOpen) setMiniMapFloorId(activeFloorId);
@@ -155,20 +166,38 @@ function AppContent() {
     [miniMapFloorId]
   );
 
+  useEffect(() => {
+    // Avoid carrying a selection across floors
+    setPickedMapPos(null);
+    setPickedRoomId(null);
+  }, [miniMapFloorId]);
+
   const handlePickOnMap = useCallback((pos: MapPosition) => {
     if (!miniMapFloorData) return;
     setPickedMapPos({ floorId: miniMapFloorData.floorId, pos });
 
     const nearest = findNearestRoom(miniMapFloorData, pos, 5);
     if (nearest) {
-      setStartFloorId(miniMapFloorData.floorId);
-      setStartRoomId(nearest);
-      setActiveFloorId(miniMapFloorData.floorId);
-      toast('📍 Location set from map', 'success', 2000);
+      setPickedRoomId(nearest);
+      toast('Selected room on map', 'success', 1500);
     } else {
+      setPickedRoomId(null);
       toast('Tap closer to a room to set location', 'info', 2500);
     }
   }, [miniMapFloorData, toast]);
+
+  const confirmPickedLocation = useCallback(() => {
+    if (!miniMapFloorData || !pickedRoomId) {
+      toast('Pick a room first', 'info', 1500);
+      return;
+    }
+
+    setStartFloorId(miniMapFloorData.floorId);
+    setStartRoomId(pickedRoomId);
+    setActiveFloorId(miniMapFloorData.floorId);
+    setIsMiniMapOpen(false);
+    toast('📍 Location set', 'success', 2000);
+  }, [miniMapFloorData, pickedRoomId, toast]);
 
   const handleStartChange = (floorId: string, roomId: string) => {
     setStartFloorId(floorId);
@@ -281,8 +310,38 @@ function AppContent() {
             endRoomId={endFloorId === activeFloorId ? endRoomId : null}
             onSessionStateChange={setIsARActive}
             onUserPositionChange={(p) => {
-              if (!p) { setUserMapPos(null); return; }
-              setUserMapPos({ floorId: p.floorId, pos: { x: p.x, z: p.z } });
+              if (!p) { setUserMapPose(null); userPoseRef.current.smoothed = null; return; }
+
+              const raw = { x: p.x, z: p.z };
+              const smoothed = smoothPosition(userPoseRef.current.smoothed, raw, 0.35);
+              userPoseRef.current.smoothed = smoothed;
+
+              const floor = ALL_FLOORS.find(f => f.floorId === p.floorId) ?? null;
+              let finalPos: MapPosition = smoothed;
+              let accuracyMeters: number | null = null;
+
+              if (floor) {
+                const seg = pathSegments.find(s => s.floorId === p.floorId) ?? null;
+                const snapPath = seg ? snapToPolyline(smoothed, seg.positions, 1.8) : null;
+                if (snapPath) {
+                  finalPos = snapPath.pos;
+                  accuracyMeters = snapPath.distance;
+                } else {
+                  const nearWp = findNearestWaypoint(floor, smoothed, 1.2);
+                  if (nearWp) {
+                    const wp = floor.waypoints.find(w => w.id === nearWp.waypointId);
+                    if (wp) {
+                      finalPos = { x: wp.position[0], z: wp.position[1] };
+                      accuracyMeters = nearWp.distance;
+                    }
+                  }
+                }
+              }
+
+              const prevHeading = userMapPose?.headingRad ?? p.headingRad;
+              const headingRad = lerp(prevHeading, p.headingRad, 0.25);
+
+              setUserMapPose({ floorId: p.floorId, pos: finalPos, headingRad, accuracyMeters });
             }}
             showARButton={!isMenuOpen}
             showUIView={!isMenuOpen}
@@ -296,16 +355,24 @@ function AppContent() {
           {/* Small minimap dock */}
           <button
             onClick={() => setIsMiniMapOpen(true)}
-            className="fixed bottom-6 left-6 z-50 bg-slate-900/90 border border-purple-500/30 p-2 rounded-2xl shadow-2xl hover:bg-slate-800 transition-colors"
+            className="fixed bottom-6 left-6 z-50 bg-gradient-to-br from-slate-900/95 to-slate-950/95 border border-purple-500/30 p-2 rounded-3xl shadow-2xl hover:brightness-110 transition-all"
             aria-label="Open map">
             <MiniMap
               floorData={miniMapFloorData}
               size={140}
-              userPosition={userMapPos?.floorId === miniMapFloorData.floorId ? userMapPos.pos : null}
+              userPosition={userMapPose?.floorId === miniMapFloorData.floorId ? userMapPose.pos : null}
+              userHeadingRad={userMapPose?.floorId === miniMapFloorData.floorId ? userMapPose.headingRad : null}
               pickedPosition={pickedMapPos?.floorId === miniMapFloorData.floorId ? pickedMapPos.pos : null}
+              path={(pathSegments.find(s => s.floorId === miniMapFloorData.floorId)?.positions ?? []).map(([x, z]) => ({ x, z }))}
+              showWaypoints={false}
             />
-            <div className="mt-2 text-[10px] text-purple-200 text-center font-semibold">
-              Tap to open map
+            <div className="mt-2 flex items-center justify-between px-1">
+              <span className="text-[10px] text-slate-200 font-bold">{miniMapFloorData.floorId.toUpperCase()}</span>
+              <span className="text-[10px] text-purple-200 font-semibold">
+                {userMapPose?.accuracyMeters !== null && userMapPose?.floorId === miniMapFloorData.floorId
+                  ? `±${userMapPose.accuracyMeters.toFixed(1)}m`
+                  : 'AR'}
+              </span>
             </div>
           </button>
 
@@ -317,7 +384,7 @@ function AppContent() {
                   <div>
                     <p className="text-xs text-purple-300 font-bold uppercase tracking-wider">Map</p>
                     <p className="text-sm text-white font-semibold">{miniMapFloorData.floorName}</p>
-                    <p className="text-[11px] text-slate-400">Tap a room area to set your current location</p>
+                    <p className="text-[11px] text-slate-400">Drag to pan • scroll/pinch to zoom • tap to select</p>
                   </div>
                   <button
                     onClick={() => setIsMiniMapOpen(false)}
@@ -344,20 +411,45 @@ function AppContent() {
                     <MiniMap
                       floorData={miniMapFloorData}
                       size={320}
-                      userPosition={userMapPos?.floorId === miniMapFloorData.floorId ? userMapPos.pos : null}
+                      userPosition={userMapPose?.floorId === miniMapFloorData.floorId ? userMapPose.pos : null}
+                      userHeadingRad={userMapPose?.floorId === miniMapFloorData.floorId ? userMapPose.headingRad : null}
                       pickedPosition={pickedMapPos?.floorId === miniMapFloorData.floorId ? pickedMapPos.pos : null}
+                      path={(pathSegments.find(s => s.floorId === miniMapFloorData.floorId)?.positions ?? []).map(([x, z]) => ({ x, z }))}
+                      interactive
+                      showWaypoints
                       onPickPosition={handlePickOnMap}
                     />
                   </div>
                 </div>
 
-                <div className="mt-3 text-[11px] text-slate-300 flex justify-between">
-                  <span>
-                    You: <span className="text-blue-300 font-bold">blue</span>
-                  </span>
-                  <span>
-                    Selected: <span className="text-amber-300 font-bold">yellow</span>
-                  </span>
+                <div className="mt-4 flex items-center justify-between gap-2">
+                  <div className="text-[11px] text-slate-300">
+                    <div>You: <span className="text-blue-300 font-bold">blue</span></div>
+                    <div>Selected: <span className="text-amber-300 font-bold">yellow</span></div>
+                    <div className="mt-1 text-slate-400">
+                      {pickedRoomId
+                        ? `Selected room: ${miniMapFloorData.rooms.find(r => r.id === pickedRoomId)?.name ?? pickedRoomId}`
+                        : 'Select a room to enable “Set Start Here”'}
+                    </div>
+                  </div>
+
+                  <div className="flex flex-col gap-2">
+                    <button
+                      onClick={() => { setPickedMapPos(null); setPickedRoomId(null); }}
+                      className="px-4 py-2 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700 text-sm">
+                      Clear
+                    </button>
+                    <button
+                      onClick={confirmPickedLocation}
+                      disabled={!pickedRoomId}
+                      className={`px-4 py-2 rounded-xl text-sm font-bold transition-colors ${
+                        pickedRoomId
+                          ? 'bg-amber-400 text-slate-900 hover:bg-amber-300'
+                          : 'bg-slate-800 text-slate-500 cursor-not-allowed'
+                      }`}>
+                      Set Start Here
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

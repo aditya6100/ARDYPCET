@@ -19,7 +19,7 @@ interface ARSceneProps {
   pathSegments: PathSegment[];
   endRoomId: string | null;
   onSessionStateChange?: (active: boolean) => void;
-  onUserPositionChange?: (pos: { floorId: string; x: number; z: number } | null) => void;
+  onUserPositionChange?: (pos: { floorId: string; x: number; z: number; headingRad: number } | null) => void;
   showARButton: boolean;
   showUIView: boolean;
 }
@@ -279,8 +279,15 @@ export default function ARScene({
         if (onUserPositionChange && floorPlanGroupRef.current) {
           const now = performance.now();
           if (now - lastUserPosUpdateRef.current > 100) {
-            const local = floorPlanGroupRef.current.worldToLocal(userPos.clone());
-            onUserPositionChange({ floorId: floorData.floorId, x: local.x, z: local.z });
+            const group = floorPlanGroupRef.current;
+            const local = group.worldToLocal(userPos.clone());
+            const dirWorld = new THREE.Vector3();
+            camera.getWorldDirection(dirWorld);
+            const aheadLocal = group.worldToLocal(userPos.clone().add(dirWorld));
+            const dirLocal = aheadLocal.sub(local).setY(0);
+            if (dirLocal.lengthSq() > 0.0001) dirLocal.normalize();
+            const headingRad = Math.atan2(dirLocal.z, dirLocal.x);
+            onUserPositionChange({ floorId: floorData.floorId, x: local.x, z: local.z, headingRad });
             lastUserPosUpdateRef.current = now;
           }
         }
