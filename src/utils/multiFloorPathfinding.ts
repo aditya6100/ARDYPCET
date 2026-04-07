@@ -45,8 +45,8 @@ class PathCache {
 
   set(startId: string, endId: string, path: PathSegment[]) {
     if (this.cache.size >= this.maxSize) {
-      const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+      const firstKey = this.cache.keys().next().value as string | undefined;
+      if (firstKey) this.cache.delete(firstKey);
     }
     this.cache.set(this.getCacheKey(startId, endId), path);
   }
@@ -221,14 +221,14 @@ function findUnifiedPath(
 
     const currentNode = graph.find(w => w.id === current)!;
     const previousId = cameFrom[current];
-    const previousNode = previousId ? graph.find(n => n.id === previousId) : null;
+    const previousNode = previousId ? graph.find(n => n.id === previousId) ?? null : null;
 
     for (const neighborId of currentNode.connectedTo) {
       const neighborNode = graph.find(w => w.id === neighborId);
       if (!neighborNode) continue;
 
       const tentativeG =
-        gScore[current] + distanceWithPenalties(currentNode, neighborNode, previousNode || undefined);
+        gScore[current] + distanceWithPenalties(currentNode, neighborNode, previousNode);
 
       if (tentativeG < gScore[neighborId]) {
         cameFrom[neighborId] = current;
@@ -366,5 +366,6 @@ export function getAllRooms(allFloorData: FloorData[]) {
 }
 
 if (typeof window !== 'undefined') {
-  (window as any).pathCache = { getStats: getCacheStats, clear: clearPathCache };
+  const debugWindow = window as unknown as Record<string, unknown>;
+  debugWindow.pathCache = { getStats: getCacheStats, clear: clearPathCache };
 }

@@ -2,16 +2,7 @@
 // IMPROVED AUTO-LOCATION v2 — Better Accuracy & Drift Detection
 // ===================================================================
 
-import { CONFIG } from '../config';
 import type { LocationData } from './autoLocation';
-
-interface MotionDataPoint {
-  x: number;
-  z: number;
-  timestamp: number;
-  confidence: number;
-  method: 'wifi' | 'ble' | 'motion';
-}
 
 // ============================================================
 // MOTION TRACKING WITH DRIFT DETECTION
@@ -19,12 +10,8 @@ interface MotionDataPoint {
 
 export class ImprovedMotionTracker {
   private lastPosition: [number, number] = [0, 0];
-  private positions: MotionDataPoint[] = [];
-  private stepCount = 0;
-  private heading = 0;
   private lastRecalibration = Date.now();
   private isStationary = false;
-  private stationaryTime = 0;
   private wallCollisionDetected = false;
 
   // Confidence degrades over time without recalibration
@@ -34,7 +21,6 @@ export class ImprovedMotionTracker {
     this.lastPosition = [x, z];
     this.lastRecalibration = Date.now();
     this.confidenceMultiplier = 1.0;
-    this.positions = [];
   }
 
   // Detect if user is stationary (movement < 0.2m/s)
@@ -44,10 +30,8 @@ export class ImprovedMotionTracker {
     if (magnitude < 2.0) {
       // Very low acceleration = stationary
       this.isStationary = true;
-      this.stationaryTime += 100; // Update interval
     } else {
       this.isStationary = false;
-      this.stationaryTime = 0;
     }
   }
 
@@ -95,7 +79,6 @@ export class ImprovedMotionTracker {
       this.lastPosition = [x, z];
       this.lastRecalibration = Date.now();
       this.confidenceMultiplier = 1.0;
-      this.stepCount = 0; // Reset step counter
     }
   }
 
@@ -121,7 +104,6 @@ export class ImprovedMotionTracker {
 export class FloorDetector {
   private altitudeHistory: number[] = [];
   private currentFloor = 1;
-  private altitudeThreshold = 2.5; // 2.5m per floor
 
   // Z-axis acceleration indicates vertical movement
   processAcceleration(accelZ: number): string | null {
@@ -239,17 +221,19 @@ export function assessLocationQuality(
   location: LocationData,
   timeSinceRecal: number
 ): ImprovedLocationData {
-  const confidence = improvedMotionTracker.getConfidence(timeSinceRecal);
-  const avgError = accuracyMonitor.getAverageError();
+  const driftConfidence = improvedMotionTracker.getConfidence(timeSinceRecal);
+  const avgErrorMeters = accuracyMonitor.getAverageError();
 
   let driftRisk: 'low' | 'medium' | 'high' = 'low';
-  if (timeSinceRecal > 60) driftRisk = 'high';
-  else if (timeSinceRecal > 30) driftRisk = 'medium';
+  if (timeSinceRecal > 60 || avgErrorMeters > 3) driftRisk = 'high';
+  else if (timeSinceRecal > 30 || avgErrorMeters > 2) driftRisk = 'medium';
 
   const recommendRecalibration = timeSinceRecal > 45 || improvedMotionTracker.isLowConfidence();
+  const adjustedConfidence = Math.min(location.confidence, driftConfidence);
 
   return {
     ...location,
+    confidence: adjustedConfidence,
     timeSinceRecalibration: timeSinceRecal,
     driftRisk,
     qualityRating: accuracyMonitor.getQuality(),
@@ -262,11 +246,12 @@ export function assessLocationQuality(
 // ============================================================
 
 if (typeof window !== 'undefined') {
-  (window as any).ImprovedMotionTracker = ImprovedMotionTracker;
-  (window as any).FloorDetector = FloorDetector;
-  (window as any).AccuracyMonitor = AccuracyMonitor;
-  (window as any).improvedMotionTracker = improvedMotionTracker;
-  (window as any).floorDetector = floorDetector;
-  (window as any).accuracyMonitor = accuracyMonitor;
-  (window as any).assessLocationQuality = assessLocationQuality;
+  const debugWindow = window as unknown as Record<string, unknown>;
+  debugWindow.ImprovedMotionTracker = ImprovedMotionTracker;
+  debugWindow.FloorDetector = FloorDetector;
+  debugWindow.AccuracyMonitor = AccuracyMonitor;
+  debugWindow.improvedMotionTracker = improvedMotionTracker;
+  debugWindow.floorDetector = floorDetector;
+  debugWindow.accuracyMonitor = accuracyMonitor;
+  debugWindow.assessLocationQuality = assessLocationQuality;
 }

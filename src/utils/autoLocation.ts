@@ -88,7 +88,6 @@ function trilaterate(
 // ============================================================
 
 class MotionTracker {
-  private lastAccel = { x: 0, y: 0, z: 0 };
   private stepCount = 0;
   private heading = 0; // radians
   private stepThreshold = 20; // m/s²
@@ -110,7 +109,6 @@ class MotionTracker {
       this.heading = (rotation.alpha * Math.PI) / 180;
     }
 
-    this.lastAccel = accel;
   }
 
   // Calculate displacement since last reset
@@ -130,30 +128,8 @@ class MotionTracker {
 // ============================================================
 // BLUETOOTH BEACON POSITIONING
 // ============================================================
-
-function bleTrilaterate(
-  beaconDistances: { uuid: string; distance: number; x: number; z: number }[]
-): { x: number; z: number; confidence: number } | null {
-  if (beaconDistances.length < 3) return null;
-
-  // Similar to WiFi trilateration but with known beacon positions
-  let sumX = 0, sumZ = 0, totalWeight = 0;
-
-  for (const beacon of beaconDistances) {
-    const weight = 1 / (beacon.distance || 0.1);
-    sumX += beacon.x * weight;
-    sumZ += beacon.z * weight;
-    totalWeight += weight;
-  }
-
-  if (totalWeight === 0) return null;
-
-  return {
-    x: sumX / totalWeight,
-    z: sumZ / totalWeight,
-    confidence: Math.min(1, beaconDistances.length / 3),
-  };
-}
+// Note: Web Bluetooth requires a user gesture; this project keeps BLE scanning
+// disabled in the background until a dedicated UX flow is implemented.
 
 // ============================================================
 // MAIN AUTO-LOCATION SERVICE
@@ -174,20 +150,36 @@ export class AutoLocationService {
 
   private initializeListeners() {
     // Motion sensors
-    if ('DeviceMotionEvent' in window && 'requestPermission' in (DeviceMotionEvent as any)) {
-      (DeviceMotionEvent as any).requestPermission?.().then(() => {
-        window.addEventListener('devicemotion', (e) => {
-          if (e.acceleration) {
-            this.motionTracker.update(e.acceleration, {
-              alpha: (e as any).alpha || 0,
-              beta: (e as any).beta || 0,
-              gamma: (e as any).gamma || 0,
-            });
+    type DeviceMotionWithPermission = typeof DeviceMotionEvent & {
+      requestPermission?: () => Promise<'granted' | 'denied'>;
+    };
+
+    const dm = DeviceMotionEvent as unknown as DeviceMotionWithPermission;
+    const startListening = () => {
+      window.addEventListener('devicemotion', (e) => {
+        const a = e.acceleration ?? e.accelerationIncludingGravity;
+        if (!a) return;
+
+        this.motionTracker.update(
+          { x: a.x ?? 0, y: a.y ?? 0, z: a.z ?? 0 },
+          {
+            alpha: e.rotationRate?.alpha ?? 0,
+            beta: e.rotationRate?.beta ?? 0,
+            gamma: e.rotationRate?.gamma ?? 0,
           }
-        });
-      }).catch(() => {
-        console.log('Motion permission denied');
+        );
       });
+    };
+
+    if (typeof dm.requestPermission === 'function') {
+      dm.requestPermission()
+        .then((result) => {
+          if (result === 'granted') startListening();
+          else console.debug('Motion permission denied');
+        })
+        .catch((err) => console.debug('Motion permission request failed', err));
+    } else if ('DeviceMotionEvent' in window) {
+      startListening();
     }
   }
 
@@ -222,7 +214,7 @@ export class AutoLocationService {
     }
 
     // Try BLE positioning
-    const bleLocation = await this.getBleLocation(floorId);
+    const bleLocation = await this.getBleLocation();
     if (bleLocation && bleLocation.confidence > bestConfidence) {
       bestLocation = bleLocation;
       bestConfidence = bleLocation.confidence;
@@ -237,7 +229,7 @@ export class AutoLocationService {
 
     // Fallback to geolocation
     if (!bestLocation) {
-      bestLocation = await this.getGeolocationBasedLocation(floorId);
+      bestLocation = await this.getGeolocationBasedLocation();
     }
 
     if (bestLocation) {
@@ -288,17 +280,9 @@ export class AutoLocationService {
   }
 
   // Get location from Bluetooth beacons
-  private async getBleLocation(floorId: string): Promise<LocationData | null> {
+  private async getBleLocation(): Promise<LocationData | null> {
     try {
       if (!('bluetooth' in navigator)) return null;
-
-      const device = await (navigator.bluetooth as any).requestDevice({
-        filters: [{ services: ['eddystone'] }],
-        optionalServices: ['eddystone'],
-      });
-
-      // Parse beacon data and trilaterate
-      // This is a simplified example
       return null;
     } catch (error) {
       console.debug('BLE location failed:', error);
@@ -322,7 +306,7 @@ export class AutoLocationService {
   }
 
   // Fallback: use geolocation (outdoor only)
-  private async getGeolocationBasedLocation(floorId: string): Promise<LocationData | null> {
+  private async getGeolocationBasedLocation(): Promise<LocationData | null> {
     return new Promise((resolve) => {
       if (!('geolocation' in navigator)) {
         resolve(null);
@@ -330,7 +314,7 @@ export class AutoLocationService {
       }
 
       navigator.geolocation.getCurrentPosition(
-        (position) => {
+        () => {
           // In a real app, you'd convert lat/lon to building coordinates
           // For now, just return null
           resolve(null);

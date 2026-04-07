@@ -4,10 +4,17 @@
 // ===================================================================
 
 import type { FloorData } from '../data/floorTypes';
-import type { Waypoint, Room } from '../data/floorTypes';
+import type { Waypoint } from '../data/floorTypes';
 
 export interface ValidationError {
-  type: 'disconnected-waypoint' | 'invalid-reference' | 'isolated-room' | 'unreachable' | 'circular-reference';
+  type:
+    | 'disconnected-waypoint'
+    | 'invalid-reference'
+    | 'isolated-room'
+    | 'unreachable'
+    | 'circular-reference'
+    | 'unidirectional-connection'
+    | 'waypoint-spacing';
   severity: 'error' | 'warning' | 'info';
   message: string;
   affectedIds?: string[];
@@ -35,7 +42,6 @@ export class PathValidator {
   static validateFloor(floor: FloorData): ValidationReport {
     const errors: ValidationError[] = [];
     const waypointIds = new Set(floor.waypoints.map(w => w.id));
-    const roomIds = new Set(floor.rooms.map(r => r.id));
     const visited = new Set<string>();
 
     // 1. Check for unreachable waypoints
@@ -104,7 +110,7 @@ export class PathValidator {
         const connectedWp = floor.waypoints.find(w => w.id === connectedId);
         if (connectedWp && !connectedWp.connectedTo.includes(wp.id)) {
           errors.push({
-            type: 'info',
+            type: 'unidirectional-connection',
             severity: 'info',
             message: `Unidirectional connection: ${wp.id} → ${connectedId} (not bidirectional)`,
             affectedIds: [wp.id, connectedId],
@@ -331,7 +337,7 @@ export class PathDebugger {
 
         if (distance < minDistance && wp1.connectedTo.includes(wp2.id)) {
           errors.push({
-            type: 'info',
+            type: 'waypoint-spacing',
             severity: 'warning',
             message: `Waypoints ${wp1.id} and ${wp2.id} are too close (${distance.toFixed(2)}m < ${minDistance}m)`,
             affectedIds: [wp1.id, wp2.id],
@@ -349,6 +355,7 @@ export class PathDebugger {
 // ============================================================
 
 if (typeof window !== 'undefined') {
-  (window as any).PathValidator = PathValidator;
-  (window as any).PathDebugger = PathDebugger;
+  const debugWindow = window as unknown as Record<string, unknown>;
+  debugWindow.PathValidator = PathValidator;
+  debugWindow.PathDebugger = PathDebugger;
 }

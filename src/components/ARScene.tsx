@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import * as THREE from 'three';
 import { ARButton } from 'three/examples/jsm/webxr/ARButton.js';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -17,7 +17,6 @@ interface ARSceneProps {
   floorData: FloorData;
   activeSegment: PathSegment | null;
   pathSegments: PathSegment[];
-  startRoomId: string | null;
   endRoomId: string | null;
   onSessionStateChange?: (active: boolean) => void;
   showARButton: boolean;
@@ -25,7 +24,7 @@ interface ARSceneProps {
 }
 
 export default function ARScene({ 
-  floorData, activeSegment, pathSegments, startRoomId, endRoomId, 
+  floorData, activeSegment, pathSegments, endRoomId, 
   onSessionStateChange, showARButton, showUIView 
 }: ARSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -37,7 +36,6 @@ export default function ARScene({
   const spheresRef = useRef<ArrowElement[]>([]);
   const startPulseRef = useRef<THREE.Mesh | null>(null);
   const destinationBeaconRef = useRef<THREE.Group | null>(null);
-  const lineRef = useRef<THREE.Line | null>(null);
   const arButtonRef = useRef<HTMLElement | null>(null);
   const wallGroupRef = useRef<THREE.Group | null>(null);
   const floorRef = useRef<THREE.Mesh | null>(null);
@@ -56,7 +54,6 @@ export default function ARScene({
   const [isScanning, setIsScanning] = useState(false);
   const [isCalibrated, setIsCalibrated] = useState(false);
   const [activeMarkerInfo, setActiveMarkerInfo] = useState<{ label: string; floorId: string } | null>(null);
-  const [distanceToDest, setDistanceToDest] = useState<number | null>(null);
   const [totalDistanceRemaining, setTotalDistanceRemaining] = useState<number | null>(null);
   const [nextInstruction, setNextInstruction] = useState<string>('');
   const [hasArrived, setHasArrived] = useState(false);
@@ -155,15 +152,33 @@ export default function ARScene({
     const dl = new THREE.DirectionalLight(0xffffff, 1); dl.position.set(10, 20, 10); scene.add(dl);
 
     const setupARButton = async () => {
-      const sessionInit: any = { 
-        requiredFeatures: ['hit-test'], 
-        optionalFeatures: ['dom-overlay', 'dom-overlay-for-handheld-ar', 'image-tracking'], 
-        domOverlay: { root: document.body } 
+      type TrackedImageInit = { image: ImageBitmap; widthInMeters: number };
+      type XRSessionInitWithTracking = XRSessionInit & {
+        domOverlay?: { root: HTMLElement };
+        trackedImages?: TrackedImageInit[];
       };
-      const trackedImages: any[] = [];
+
+      const sessionInit: XRSessionInitWithTracking = {
+        requiredFeatures: ['hit-test'],
+        optionalFeatures: ['dom-overlay', 'dom-overlay-for-handheld-ar', 'image-tracking'],
+        domOverlay: { root: document.body },
+      };
+
+      const trackedImages: TrackedImageInit[] = [];
       const baseUrl = window.location.href.split('?')[0].split('#')[0];
       const getAbsUrl = (path: string) => baseUrl.endsWith('/') ? baseUrl + path : baseUrl.substring(0, baseUrl.lastIndexOf('/') + 1) + path;
-      for (const floor of floors) { if (floor.marker) { try { const img = new Image(); img.src = getAbsUrl(floor.marker.image); await img.decode(); const bitmap = await createImageBitmap(img); trackedImages.push({ image: bitmap, widthInMeters: 0.2 }); } catch (e) {} } }
+      for (const floor of floors) {
+        if (!floor.marker) continue;
+        try {
+          const img = new Image();
+          img.src = getAbsUrl(floor.marker.image);
+          await img.decode();
+          const bitmap = await createImageBitmap(img);
+          trackedImages.push({ image: bitmap, widthInMeters: 0.2 });
+        } catch (e) {
+          console.debug('Image tracking marker load failed:', e);
+        }
+      }
       if (trackedImages.length > 0) sessionInit.trackedImages = trackedImages;
       
       const arButton = ARButton.createButton(renderer, sessionInit); 
@@ -219,7 +234,15 @@ export default function ARScene({
       const session = renderer.xr.getSession(), frame = renderer.xr.getFrame();
       if (session && frame && isScanningRef.current && !isCalibratedRef.current && floorPlanGroupRef.current) {
         try {
-          const results = (frame as any).getImageTrackingResults?.() || [];
+          type ImageTrackingResult = {
+            index: number;
+            trackingState: string;
+            imageSpace: XRSpace;
+          };
+          const frameWithTracking = frame as XRFrame & {
+            getImageTrackingResults?: () => ImageTrackingResult[];
+          };
+          const results = frameWithTracking.getImageTrackingResults?.() ?? [];
           for (const result of results) {
             if (result.trackingState === 'tracked' || result.trackingState === 'emulated') {
               const floorFound = floors.filter(f => f.marker)[result.index];
@@ -241,7 +264,9 @@ export default function ARScene({
               }
             }
           }
-        } catch (e) {}
+        } catch (e) {
+          console.debug('Image tracking scan failed:', e);
+        }
       }
 
       const calibrated = isCalibratedRef.current, curActiveSegment = activeSegmentRef.current, curPathSegments = pathSegmentsRef.current;
@@ -253,7 +278,6 @@ export default function ARScene({
         const distCurrent = userPos.distanceTo(destPos);
         const now = performance.now();
         if (now - lastStateUpdateRef.current > 100) {
-          setDistanceToDest(distCurrent);
           let subseq = 0;
           const fIdx = curPathSegments.findIndex(s => s.floorId === floorData.floorId);
           if (fIdx !== -1) {
@@ -291,7 +315,7 @@ export default function ARScene({
       if (startPulseRef.current) {
         startPulseRef.current.rotation.y += 0.02;
         startPulseRef.current.position.y = 0.6 + Math.sin(time*3)*0.05;
-        (startPulseRef.current.material as any).emissiveIntensity = 2 + Math.sin(time*4);
+        (startPulseRef.current.material as THREE.MeshStandardMaterial).emissiveIntensity = 2 + Math.sin(time*4);
       }
       if (destinationBeaconRef.current) {
         const label = destinationBeaconRef.current.children.find(c => c.userData.isDestinationLabel);
@@ -374,13 +398,20 @@ export default function ARScene({
 
   const drawPath = (segment: PathSegment | null, group: THREE.Group) => {
     if (spheresRef.current.length > 0) { spheresRef.current[0].geo.dispose(); spheresRef.current.forEach(e => { group.remove(e.group); if (e.mat) e.mat.dispose(); }); spheresRef.current = []; }
-    if (startPulseRef.current) { group.remove(startPulseRef.current); startPulseRef.current.geometry.dispose(); (startPulseRef.current.material as any).dispose(); startPulseRef.current = null; }
+    if (startPulseRef.current) {
+      group.remove(startPulseRef.current);
+      startPulseRef.current.geometry.dispose();
+      const mat = startPulseRef.current.material;
+      if (Array.isArray(mat)) mat.forEach(m => m.dispose());
+      else mat.dispose();
+      startPulseRef.current = null;
+    }
     if (destinationBeaconRef.current) { group.remove(destinationBeaconRef.current); destinationBeaconRef.current = null; }
     if (!segment || !segment.positions || segment.positions.length < 2) return;
 
     const pts = segment.positions.map(p => new THREE.Vector3(p[0], 0.12, p[1]));
     const dr = endRoomIdRef.current ? floorData.rooms.find(r => r.id === endRoomIdRef.current) : null;
-    let doorPos = pts[pts.length - 1].clone();
+    const doorPos = pts[pts.length - 1].clone();
     if (dr) { const rc = new THREE.Vector3(dr.center[0], 0.12, dr.center[1]); doorPos.add(new THREE.Vector3().subVectors(rc, doorPos).normalize().multiplyScalar(0.55)); pts[pts.length-1].copy(doorPos); }
 
     const sMarker = new THREE.Mesh(new THREE.OctahedronGeometry(0.25, 0), new THREE.MeshStandardMaterial({ color: 0x10b981, emissive: 0x10b981, emissiveIntensity: 2 }));
@@ -423,6 +454,11 @@ export default function ARScene({
   return (
     <>
       <div ref={containerRef} className="fixed inset-0 z-0" />
+      {(isScanning || isCalibrated) && activeMarkerInfo && (
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-slate-900/85 backdrop-blur-md px-4 py-2 rounded-full border border-purple-500/30 text-xs text-purple-200 shadow-xl">
+          Marker: <span className="text-white font-bold">{activeMarkerInfo.label}</span>
+        </div>
+      )}
       {isScanning && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40">
           <div className="bg-slate-900 p-8 rounded-3xl border border-purple-500/50 text-center max-w-xs">
@@ -449,7 +485,7 @@ export default function ARScene({
           </button>
           <div className="fixed right-6 top-1/2 -translate-y-1/2 z-50 bg-slate-900/80 p-4 rounded-3xl border border-white/10 flex flex-col items-center gap-3">
             <span className="text-[10px] text-white font-bold uppercase vertical-text">Height</span>
-            <input type="range" min="0.05" max="2.0" step="0.05" value={arrowHeight} onChange={e => setArrowHeight(parseFloat(e.target.value))} className="h-40 w-1 accent-purple-500" style={{ WebkitAppearance: 'slider-vertical' } as any} />
+            <input type="range" min="0.05" max="2.0" step="0.05" value={arrowHeight} onChange={e => setArrowHeight(parseFloat(e.target.value))} className="h-40 w-1 accent-purple-500" style={{ WebkitAppearance: 'slider-vertical' } as unknown as CSSProperties} />
             <span className="text-xs text-purple-400 font-black">{arrowHeight.toFixed(2)}m</span>
           </div>
         </>

@@ -12,6 +12,18 @@ export default defineConfig(({ command }) => ({
     host: true, // Expose to your local network
     https: true, // Enable HTTPS
   },
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return;
+          if (id.includes('three')) return 'three';
+          if (id.includes('react')) return 'react';
+          if (id.includes('lucide-react')) return 'ui';
+        },
+      },
+    },
+  },
   optimizeDeps: {
     exclude: ['lucide-react'],
   },

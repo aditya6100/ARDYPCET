@@ -1,14 +1,16 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
 import { Menu, Zap, MapPin } from 'lucide-react';
-import ARScene from './components/ARScene';
 import NavigationUI from './components/NavigationUI';
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { ToastContainer, useToast } from './components/Toast';
+import { ToastContainer } from './components/ToastContainer';
+import { useToast } from './hooks/useToast';
 import { ALL_FLOORS } from './data/floorRegistry';
 import { findMultiFloorPath } from './utils/multiFloorPathfinding';
 import { autoLocationService, type LocationData } from './utils/autoLocation';
 import { PathValidator } from './utils/pathValidator';
 import type { PathSegment } from './utils/multiFloorPathfinding';
+
+const ARScene = lazy(() => import('./components/ARScene'));
 
 function AppContent() {
   const { toasts, toast, removeToast } = useToast();
@@ -47,6 +49,8 @@ function AppContent() {
   const [endRoomId,    setEndRoomId]    = useState(defaultEnd);
 
   const [activeFloorId, setActiveFloorId] = useState(defaultFloor);
+  const activeFloorIdRef = useRef(activeFloorId);
+  useEffect(() => { activeFloorIdRef.current = activeFloorId; }, [activeFloorId]);
 
   const [pathSegments, setPathSegments] = useState<PathSegment[]>([]);
   const [isARActive,   setIsARActive]   = useState(false);
@@ -56,6 +60,38 @@ function AppContent() {
   const [currentLocation, setCurrentLocation] = useState<LocationData | null>(null);
   const [autoLocationEnabled, setAutoLocationEnabled] = useState(false);
   const [locationAccuracy, setLocationAccuracy] = useState<number>(0);
+
+  const [loadScene, setLoadScene] = useState(false);
+  const idleLoaderCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    if (loadScene) return;
+
+    type IdleCallbackDeadline = { didTimeout: boolean; timeRemaining: () => number };
+    type IdleRequestCallback = (deadline: IdleCallbackDeadline) => void;
+
+    const requestIdle = (cb: IdleRequestCallback, timeoutMs: number) => {
+      const w = window as unknown as {
+        requestIdleCallback?: (callback: IdleRequestCallback, opts?: { timeout: number }) => number;
+        cancelIdleCallback?: (handle: number) => void;
+      };
+
+      if (typeof w.requestIdleCallback === 'function') {
+        const handle = w.requestIdleCallback(cb, { timeout: timeoutMs });
+        return () => w.cancelIdleCallback?.(handle);
+      }
+
+      const handle = window.setTimeout(() => cb({ didTimeout: true, timeRemaining: () => 0 }), 200);
+      return () => window.clearTimeout(handle);
+    };
+
+    idleLoaderCleanupRef.current = requestIdle(() => setLoadScene(true), 1500);
+
+    return () => {
+      idleLoaderCleanupRef.current?.();
+      idleLoaderCleanupRef.current = null;
+    };
+  }, [loadScene]);
 
   const handleFindPath = useCallback(() => {
     const segments = findMultiFloorPath(startRoomId, endRoomId, ALL_FLOORS);
@@ -76,7 +112,7 @@ function AppContent() {
     }
 
     // Start location tracking on the current floor
-    autoLocationService.start(activeFloorId);
+    autoLocationService.start(activeFloorIdRef.current);
 
     // Listen for location updates
     const unsubscribe = autoLocationService.onChange((location: LocationData) => {
@@ -203,17 +239,18 @@ function AppContent() {
       )}
 
       {/* 3D Scene — always rendered, floor switches dynamically */}
-      {activeFloorData && (
-        <ARScene
-          floorData={activeFloorData}
-          activeSegment={activeSegment}
-          pathSegments={pathSegments}
-          startRoomId={startFloorId === activeFloorId ? startRoomId : null}
-          endRoomId={endFloorId === activeFloorId ? endRoomId : null}
-          onSessionStateChange={setIsARActive}
-          showARButton={!isMenuOpen}
-          showUIView={!isMenuOpen}
-        />
+      {activeFloorData && loadScene && (
+        <Suspense fallback={<div className="fixed inset-0 z-0 bg-slate-950" />}>
+          <ARScene
+            floorData={activeFloorData}
+            activeSegment={activeSegment}
+            pathSegments={pathSegments}
+            endRoomId={endFloorId === activeFloorId ? endRoomId : null}
+            onSessionStateChange={setIsARActive}
+            showARButton={!isMenuOpen}
+            showUIView={!isMenuOpen}
+          />
+        </Suspense>
       )}
 
       {/* Toast Notifications */}
