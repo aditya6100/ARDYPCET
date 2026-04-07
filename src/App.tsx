@@ -20,9 +20,18 @@ function AppContent() {
   useEffect(() => {
     if (!hasValidated) {
       const diagnostics = PathValidator.getDiagnostics(ALL_FLOORS);
-      if (!diagnostics.allValid) {
+      
+      // Only show warning if there are actual errors (not just info/warnings)
+      const criticalErrors = diagnostics.reports.flatMap(r => 
+        r.errors.filter(e => e.severity === 'error')
+      );
+      
+      if (criticalErrors.length > 0) {
         console.warn('⚠️  Floor data issues detected:', diagnostics);
         toast('⚠️ Floor data issues detected - check console', 'warning', 5000);
+      } else {
+        // Log for debugging but don't show warning toast
+        console.log('✓ Floor validation passed. Info messages:', diagnostics);
       }
       setHasValidated(true);
     }
