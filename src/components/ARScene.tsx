@@ -19,13 +19,14 @@ interface ARSceneProps {
   pathSegments: PathSegment[];
   endRoomId: string | null;
   onSessionStateChange?: (active: boolean) => void;
+  onUserPositionChange?: (pos: { floorId: string; x: number; z: number } | null) => void;
   showARButton: boolean;
   showUIView: boolean;
 }
 
 export default function ARScene({ 
   floorData, activeSegment, pathSegments, endRoomId, 
-  onSessionStateChange, showARButton, showUIView 
+  onSessionStateChange, onUserPositionChange, showARButton, showUIView 
 }: ARSceneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
@@ -48,6 +49,7 @@ export default function ARScene({
   const pathSegmentsRef = useRef(pathSegments);
   const isCalibratedRef = useRef(false);
   const lastStateUpdateRef = useRef(0);
+  const lastUserPosUpdateRef = useRef(0);
   const isScanningRef = useRef(false);
   
   const [isFarView, setIsFarView] = useState(false);
@@ -216,6 +218,7 @@ export default function ARScene({
 
     renderer.xr.addEventListener('sessionend', () => {
       if (onSessionStateChange) onSessionStateChange(false);
+      if (onUserPositionChange) onUserPositionChange(null);
       if (arButtonRef.current) arButtonRef.current.style.display = 'block';
       const group = floorPlanGroupRef.current; if (!group) return;
       group.scale.set(1, 1, 1); group.position.set(0, 0, 0); group.rotation.set(0, 0, 0);
@@ -272,6 +275,16 @@ export default function ARScene({
       const calibrated = isCalibratedRef.current, curActiveSegment = activeSegmentRef.current, curPathSegments = pathSegmentsRef.current;
       if (isPresenting && calibrated && curActiveSegment && curActiveSegment.positions.length > 0) {
         const userPos = new THREE.Vector3(); camera.getWorldPosition(userPos);
+
+        if (onUserPositionChange && floorPlanGroupRef.current) {
+          const now = performance.now();
+          if (now - lastUserPosUpdateRef.current > 100) {
+            const local = floorPlanGroupRef.current.worldToLocal(userPos.clone());
+            onUserPositionChange({ floorId: floorData.floorId, x: local.x, z: local.z });
+            lastUserPosUpdateRef.current = now;
+          }
+        }
+
         const lastPt = curActiveSegment.positions[curActiveSegment.positions.length - 1];
         const destPos = new THREE.Vector3(lastPt[0], 0, lastPt[1]);
         if (floorPlanGroupRef.current) destPos.applyMatrix4(floorPlanGroupRef.current.matrixWorld);

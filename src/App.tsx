@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef, lazy, Suspense } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef, lazy, Suspense } from 'react';
 import { Menu, Zap, MapPin } from 'lucide-react';
 import NavigationUI from './components/NavigationUI';
 import { ErrorBoundary } from './components/ErrorBoundary';
@@ -9,6 +9,9 @@ import { findMultiFloorPath } from './utils/multiFloorPathfinding';
 import { autoLocationService, type LocationData } from './utils/autoLocation';
 import { PathValidator } from './utils/pathValidator';
 import type { PathSegment } from './utils/multiFloorPathfinding';
+import MiniMap from './components/MiniMap';
+import { findNearestRoom, type MapPosition } from './utils/minimap';
+import { CONFIG } from './config';
 
 const ARScene = lazy(() => import('./components/ARScene'));
 
@@ -137,6 +140,36 @@ function AppContent() {
     };
   }, [autoLocationEnabled]); // Only depend on toggle, not activeFloorId
 
+  // Minimap state (AR mode)
+  const [isMiniMapOpen, setIsMiniMapOpen] = useState(false);
+  const [miniMapFloorId, setMiniMapFloorId] = useState(activeFloorId);
+  const [pickedMapPos, setPickedMapPos] = useState<{ floorId: string; pos: MapPosition } | null>(null);
+  const [userMapPos, setUserMapPos] = useState<{ floorId: string; pos: MapPosition } | null>(null);
+
+  useEffect(() => {
+    if (isMiniMapOpen) setMiniMapFloorId(activeFloorId);
+  }, [isMiniMapOpen, activeFloorId]);
+
+  const miniMapFloorData = useMemo(
+    () => ALL_FLOORS.find(f => f.floorId === miniMapFloorId) ?? null,
+    [miniMapFloorId]
+  );
+
+  const handlePickOnMap = useCallback((pos: MapPosition) => {
+    if (!miniMapFloorData) return;
+    setPickedMapPos({ floorId: miniMapFloorData.floorId, pos });
+
+    const nearest = findNearestRoom(miniMapFloorData, pos, 5);
+    if (nearest) {
+      setStartFloorId(miniMapFloorData.floorId);
+      setStartRoomId(nearest);
+      setActiveFloorId(miniMapFloorData.floorId);
+      toast('📍 Location set from map', 'success', 2000);
+    } else {
+      toast('Tap closer to a room to set location', 'info', 2500);
+    }
+  }, [miniMapFloorData, toast]);
+
   const handleStartChange = (floorId: string, roomId: string) => {
     setStartFloorId(floorId);
     setStartRoomId(roomId);
@@ -247,10 +280,89 @@ function AppContent() {
             pathSegments={pathSegments}
             endRoomId={endFloorId === activeFloorId ? endRoomId : null}
             onSessionStateChange={setIsARActive}
+            onUserPositionChange={(p) => {
+              if (!p) { setUserMapPos(null); return; }
+              setUserMapPos({ floorId: p.floorId, pos: { x: p.x, z: p.z } });
+            }}
             showARButton={!isMenuOpen}
             showUIView={!isMenuOpen}
           />
         </Suspense>
+      )}
+
+      {/* Minimap overlay (AR mode) */}
+      {CONFIG.ENABLE_MINIMAP && isARActive && !isMenuOpen && miniMapFloorData && (
+        <>
+          {/* Small minimap dock */}
+          <button
+            onClick={() => setIsMiniMapOpen(true)}
+            className="fixed bottom-6 left-6 z-50 bg-slate-900/90 border border-purple-500/30 p-2 rounded-2xl shadow-2xl hover:bg-slate-800 transition-colors"
+            aria-label="Open map">
+            <MiniMap
+              floorData={miniMapFloorData}
+              size={140}
+              userPosition={userMapPos?.floorId === miniMapFloorData.floorId ? userMapPos.pos : null}
+              pickedPosition={pickedMapPos?.floorId === miniMapFloorData.floorId ? pickedMapPos.pos : null}
+            />
+            <div className="mt-2 text-[10px] text-purple-200 text-center font-semibold">
+              Tap to open map
+            </div>
+          </button>
+
+          {/* Full map */}
+          {isMiniMapOpen && (
+            <div className="fixed inset-0 z-[60] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="w-full max-w-md bg-slate-900/95 border border-purple-500/30 rounded-3xl p-4 shadow-2xl">
+                <div className="flex items-center justify-between mb-3">
+                  <div>
+                    <p className="text-xs text-purple-300 font-bold uppercase tracking-wider">Map</p>
+                    <p className="text-sm text-white font-semibold">{miniMapFloorData.floorName}</p>
+                    <p className="text-[11px] text-slate-400">Tap a room area to set your current location</p>
+                  </div>
+                  <button
+                    onClick={() => setIsMiniMapOpen(false)}
+                    className="px-3 py-2 rounded-xl bg-slate-800 text-slate-200 hover:bg-slate-700">
+                    Close
+                  </button>
+                </div>
+
+                <div className="grid grid-cols-6 gap-1 mb-3">
+                  {ALL_FLOORS.map(f => (
+                    <button
+                      key={f.floorId}
+                      onClick={() => setMiniMapFloorId(f.floorId)}
+                      className={`text-[11px] py-1.5 rounded-lg font-bold transition-colors ${
+                        miniMapFloorId === f.floorId ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300 hover:bg-slate-700'
+                      }`}>
+                      {f.floorId.toUpperCase()}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center justify-center">
+                  <div className="rounded-2xl overflow-hidden">
+                    <MiniMap
+                      floorData={miniMapFloorData}
+                      size={320}
+                      userPosition={userMapPos?.floorId === miniMapFloorData.floorId ? userMapPos.pos : null}
+                      pickedPosition={pickedMapPos?.floorId === miniMapFloorData.floorId ? pickedMapPos.pos : null}
+                      onPickPosition={handlePickOnMap}
+                    />
+                  </div>
+                </div>
+
+                <div className="mt-3 text-[11px] text-slate-300 flex justify-between">
+                  <span>
+                    You: <span className="text-blue-300 font-bold">blue</span>
+                  </span>
+                  <span>
+                    Selected: <span className="text-amber-300 font-bold">yellow</span>
+                  </span>
+                </div>
+              </div>
+            </div>
+          )}
+        </>
       )}
 
       {/* Toast Notifications */}
