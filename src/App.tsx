@@ -4,6 +4,7 @@ import NavigationUI from './components/NavigationUI';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { ToastContainer } from './components/ToastContainer';
 import { useToast } from './hooks/useToast';
+import { useCampusGeofence } from './hooks/useCampusGeofence';
 import { ALL_FLOORS } from './data/floorRegistry';
 import { findMultiFloorPath } from './utils/multiFloorPathfinding';
 import { autoLocationService, type LocationData } from './utils/autoLocation';
@@ -61,6 +62,21 @@ function AppContent() {
   const [activeFloorId, setActiveFloorId] = useState(defaultFloor);
   const activeFloorIdRef = useRef(activeFloorId);
   useEffect(() => { activeFloorIdRef.current = activeFloorId; }, [activeFloorId]);
+
+  const { state: campusState, checkOnce: checkCampusOnce, startWatch: startCampusWatch } = useCampusGeofence();
+  const hasAutoSelectedCampusRef = useRef(false);
+
+  useEffect(() => {
+    if (campusState.status === 'disabled' || campusState.status === 'error') return;
+    if (!('inside' in campusState) || campusState.inside === null) return;
+    if (campusState.inside && !hasAutoSelectedCampusRef.current) {
+      hasAutoSelectedCampusRef.current = true;
+      toast('DYPCET detected via GPS', 'success', 2500);
+      setActiveFloorId(defaultFloor);
+      setStartFloorId(defaultFloor);
+      setEndFloorId(defaultFloor);
+    }
+  }, [campusState, toast]);
 
   const [pathSegments, setPathSegments] = useState<PathSegment[]>([]);
   const [isARActive,   setIsARActive]   = useState(false);
@@ -215,6 +231,10 @@ function AppContent() {
   // Path segment to render on the active floor
   const activeSegment = pathSegments.find(s => s.floorId === activeFloorId) ?? null;
 
+  const campusChecking = campusState.status === 'checking';
+  const campusInside = campusState.status !== 'disabled' && 'inside' in campusState ? campusState.inside : null;
+  const campusDistance = campusState.status !== 'disabled' && 'distanceMeters' in campusState ? campusState.distanceMeters : null;
+
   return (
     <main>
       {/* Hamburger menu button */}
@@ -244,6 +264,32 @@ function AppContent() {
               <span className="text-xs">{Math.round(locationAccuracy * 100)}%</span>
             </>
           )}
+        </button>
+      )}
+
+
+      {/* Campus geofence (GPS) */}
+      {CONFIG.CAMPUS_GEOFENCE_ENABLED && !isARActive && !isMenuOpen && (
+        <button
+          onClick={() => { checkCampusOnce(); startCampusWatch(); }}
+          className={`fixed top-20 right-6 z-20 px-4 py-2 rounded-full shadow-lg transition-all flex items-center gap-2 text-sm font-medium ${
+            campusInside === true
+              ? 'bg-emerald-500/80 text-white border border-emerald-300'
+              : campusInside === false
+                ? 'bg-red-500/70 text-white border border-red-300'
+                : 'bg-slate-900/90 border border-purple-500/30 text-slate-300 hover:bg-slate-800'
+          }`}
+          title={campusDistance !== null ? `Distance to campus center: ${Math.round(campusDistance)}m` : 'Detect campus via GPS'}>
+          <MapPin className="w-4 h-4" />
+          <span>
+            {campusChecking
+              ? 'Checking?'
+              : campusInside === true
+                ? 'On Campus'
+                : campusInside === false
+                  ? 'Off Campus'
+                  : 'Detect Campus'}
+          </span>
         </button>
       )}
 

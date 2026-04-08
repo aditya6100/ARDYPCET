@@ -76,4 +76,15 @@ export const CONFIG = {
   ENABLE_MINIMAP: true,
   ENABLE_DISTANCE_DISPLAY: true,
   ENABLE_AUTO_LOCATION: true,
+
+  // === CAMPUS GEOFENCE (GPS) ===
+  // Used only to confirm the user is near DYPCET and to auto-select the dataset.
+  // IMPORTANT: Set these to your exact campus location.
+  CAMPUS_GEOFENCE_ENABLED: true,
+  CAMPUS_CENTER: {
+    // DYPCET (placeholder): update to the exact lat/lon you want to geofence
+    lat: 16.6909,
+    lon: 74.2465,
+  },
+  CAMPUS_RADIUS_METERS: 600,
 };
