@@ -36,6 +36,7 @@ export default function MiniMap({
   size = 180,
   userPosition,
   userHeadingRad,
+  followUser = false,
   pickedPosition,
   path,
   interactive = false,
@@ -46,6 +47,7 @@ export default function MiniMap({
   size?: number;
   userPosition?: MapPosition | null;
   userHeadingRad?: number | null;
+  followUser?: boolean;
   pickedPosition?: MapPosition | null;
   path?: MapPosition[] | null;
   interactive?: boolean;
@@ -80,9 +82,21 @@ export default function MiniMap({
 
   const centerX = width / 2;
   const centerY = height / 2;
-  const transform = interactive
-    ? `translate(${centerX + pan.x} ${centerY + pan.y}) scale(${zoom}) translate(${-centerX} ${-centerY})`
-    : undefined;
+
+  const rotateRad = followUser && userHeadingRad !== null && userHeadingRad !== undefined
+    ? (Math.PI / 2 - userHeadingRad)
+    : 0;
+
+  const transformParts: string[] = [];
+  if (interactive) {
+    transformParts.push(`translate(${centerX + pan.x} ${centerY + pan.y})`);
+    transformParts.push(`scale(${zoom})`);
+    transformParts.push(`translate(${-centerX} ${-centerY})`);
+  }
+  if (rotateRad !== 0) {
+    transformParts.push(`rotate(${(rotateRad * 180) / Math.PI} ${centerX} ${centerY})`);
+  }
+  const transform = transformParts.length > 0 ? transformParts.join(' ') : undefined;
 
   const toBasePxFromClient = (clientX: number, clientY: number) => {
     const rect = (svgRef.current as SVGSVGElement | null)?.getBoundingClientRect();

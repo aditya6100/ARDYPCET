@@ -202,7 +202,7 @@ export default function ARScene({
       const curSeg = activeSegmentRef.current;
       if (curSeg && curSeg.positions.length >= 2) {
         const p1 = curSeg.positions[0], p2 = curSeg.positions[1];
-        const angle = Math.atan2(p2[0]-p1[0], p2[1]-p1[1]);
+        const angle = Math.atan2(p2[1] - p1[1], p2[0] - p1[0]);
         group.rotation.set(0, -angle, 0);
         const p1Vec = new THREE.Vector3(p1[0], 0, p1[1]).applyAxisAngle(new THREE.Vector3(0,1,0), group.rotation.y);
         group.position.set(-p1Vec.x, 0, -p1Vec.z);

@@ -82,6 +82,14 @@ export function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
+export function lerpAngleRad(a: number, b: number, t: number) {
+  const twoPi = Math.PI * 2;
+  let delta = (b - a) % twoPi;
+  if (delta > Math.PI) delta -= twoPi;
+  if (delta < -Math.PI) delta += twoPi;
+  return a + delta * t;
+}
+
 export function smoothPosition(prev: MapPosition | null, next: MapPosition, alpha = 0.35): MapPosition {
   if (!prev) return next;
   return { x: lerp(prev.x, next.x, alpha), z: lerp(prev.z, next.z, alpha) };

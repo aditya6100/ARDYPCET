@@ -14,7 +14,7 @@ import MiniMap from './components/MiniMap';
 import {
   findNearestRoom,
   findNearestWaypoint,
-  lerp,
+  lerpAngleRad,
   smoothPosition,
   snapToPolyline,
   type MapPosition,
@@ -385,7 +385,7 @@ function AppContent() {
               }
 
               const prevHeading = userMapPose?.headingRad ?? p.headingRad;
-              const headingRad = lerp(prevHeading, p.headingRad, 0.25);
+              const headingRad = lerpAngleRad(prevHeading, p.headingRad, 0.25);
 
               setUserMapPose({ floorId: p.floorId, pos: finalPos, headingRad, accuracyMeters });
             }}
@@ -408,6 +408,7 @@ function AppContent() {
               size={140}
               userPosition={userMapPose?.floorId === miniMapFloorData.floorId ? userMapPose.pos : null}
               userHeadingRad={userMapPose?.floorId === miniMapFloorData.floorId ? userMapPose.headingRad : null}
+              followUser
               pickedPosition={pickedMapPos?.floorId === miniMapFloorData.floorId ? pickedMapPos.pos : null}
               path={(pathSegments.find(s => s.floorId === miniMapFloorData.floorId)?.positions ?? []).map(([x, z]) => ({ x, z }))}
               showWaypoints={false}
